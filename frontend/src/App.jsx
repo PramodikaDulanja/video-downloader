@@ -6,7 +6,6 @@ import {
   ClipboardPaste,
   X,
   Film,
-  CheckCircle2,
   Sparkles,
 } from 'lucide-react'
 import './App.css'
@@ -16,6 +15,8 @@ function App() {
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState(null)
   const [error, setError] = useState(null)
+  
+  // This state holds the integer resolution (e.g., 1080, 720)
   const [selectedQuality, setSelectedQuality] = useState('')
   const [isDownloading, setIsDownloading] = useState(false)
 
@@ -57,8 +58,9 @@ function App() {
       }
 
       setResult(data)
+      // The backend now returns an array of objects: [{resolution: 1080, sizeLabel: "45.2 MB"}, ...]
       if (data.resolutions && data.resolutions.length > 0) {
-        setSelectedQuality(data.resolutions[0])
+        setSelectedQuality(data.resolutions[0].resolution)
       }
     } catch (err) {
       setError(err.message || 'Make sure your Python backend is running.')
@@ -218,21 +220,25 @@ function App() {
                   {result.title}
                 </h2>
 
-                {/* Resolution Pill Selector */}
+                {/* Resolution Pill Selector with File Sizes */}
                 {result.resolutions && result.resolutions.length > 0 && (
                   <div className="quality-selector-group">
                     <label>Select Resolution</label>
                     <div className="quality-pills">
-                      {result.resolutions.map((res) => (
+                      {result.resolutions.map((resObj) => (
                         <button
-                          key={res}
+                          key={resObj.resolution}
                           type="button"
-                          className={`quality-pill ${selectedQuality === res ? 'active' : ''}`}
-                          onClick={() => setSelectedQuality(res)}
+                          className={`quality-pill ${selectedQuality === resObj.resolution ? 'active' : ''}`}
+                          onClick={() => setSelectedQuality(resObj.resolution)}
                           disabled={isDownloading}
                         >
-                          <span className="res-value">{res}p</span>
-                          <span className="res-badge">{getBadgeLabel(res)}</span>
+                          <div className="pill-main-row">
+                            <span className="res-value">{resObj.resolution}p</span>
+                            <span className="res-badge">{getBadgeLabel(resObj.resolution)}</span>
+                          </div>
+                          {/* Here is the file size rendered under the resolution */}
+                          <div className="res-size">{resObj.sizeLabel}</div>
                         </button>
                       ))}
                     </div>

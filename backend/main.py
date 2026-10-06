@@ -56,49 +56,100 @@ if os.path.exists("cookies.txt"):
 
 @app.post("/api/get-info")
 def get_video_info(request: VideoRequest):
+    """Fetches video metadata, maps standard resolutions, and estimates file sizes."""
     ydl_opts = dict(BASE_YDL_OPTS)
+
+    # Helper function to round weird heights to standard UI buckets
+    def snap_resolution(h):
+        if h >= 2000:
+            return 2160  # 4K
+        if h >= 1400:
+            return 1440  # 2K
+        if h >= 1000:
+            return 1080  # FHD (Catches 906p)
+        if h >= 700:
+            return 720   # HD  (Catches 680p)
+        if h >= 470:
+            return 480   # SD
+        if h >= 350:
+            return 360   # SD
+        return h
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(request.url, download=False)
+            formats = info.get('formats', [])
+            duration = info.get('duration', 0)  # Video length in seconds
 
-            # Extract distinct video heights
-            resolutions = set()
-            for f in info.get('formats', []):
-                height = f.get('height')
-                if height and height >= 144:
-                    resolutions.add(height)
+            # 1. Find the best audio size (Calculate it if hidden)
+            audio_formats = [f for f in formats if f.get(
+                'vcodec') == 'none' and f.get('acodec') != 'none']
+            best_audio_size = 0
+            for af in audio_formats:
+                a_size = af.get('filesize') or af.get('filesize_approx')
+                # If size is hidden, estimate it: (bitrate kbps * 1000 / 8) * seconds
+                if not a_size and af.get('tbr') and duration:
+                    a_size = (af.get('tbr') * 1000 / 8) * duration
+                if a_size and a_size > best_audio_size:
+                    best_audio_size = a_size
 
-            # Sort descending: 4K (2160) -> 1080 -> 720 ...
-            sorted_resolutions = sorted(list(resolutions), reverse=True)
+            # 2. Map resolutions and calculate total sizes
+            res_map = {}
+            for f in formats:
+                raw_height = f.get('height')
+                if raw_height and raw_height >= 144:
+                    # Clean up the resolution for the UI
+                    clean_height = snap_resolution(raw_height)
+
+                    v_size = f.get('filesize') or f.get('filesize_approx')
+                    # Estimate video size if hidden
+                    if not v_size and f.get('tbr') and duration:
+                        v_size = (f.get('tbr') * 1000 / 8) * duration
+                    v_size = v_size or 0
+
+                    # Add audio size if this stream is video-only
+                    total_size = (
+                        v_size + best_audio_size) if f.get('acodec') == 'none' else v_size
+
+                    # Keep the highest file size (best quality) for this resolution bucket
+                    if clean_height not in res_map or total_size > res_map[clean_height]:
+                        res_map[clean_height] = total_size
+
+            # 3. Format the data for the React frontend
+            resolutions = []
+            for height in sorted(res_map.keys(), reverse=True):
+                size_b = res_map[height]
+                if size_b > 0:
+                    mb = size_b / (1024 * 1024)
+                    # Added ~ to indicate it might be an estimate
+                    size_str = f"~{mb:.1f} MB"
+                else:
+                    size_str = "Size Hidden"
+
+                resolutions.append({
+                    "resolution": height,
+                    "sizeLabel": size_str
+                })
 
             return {
                 "title": info.get('title', 'Unknown Title'),
                 "thumbnail": info.get('thumbnail', ''),
                 "direct_url": request.url,
-                "resolutions": sorted_resolutions
+                "resolutions": resolutions
             }
 
     except DownloadError as e:
         error_msg = str(e).lower()
-        if "private video" in error_msg:
-            client_msg = "This video is private. Access is restricted."
-        elif "sign in" in error_msg or "login" in error_msg:
-            client_msg = "This video requires login. Provide a valid cookies.txt file."
-        elif "geo restricted" in error_msg or "country" in error_msg:
-            client_msg = "This video is unavailable in the server's region."
-        elif "format" in error_msg:
-            client_msg = "No suitable stream formats could be extracted for this video."
+        if "private" in error_msg:
+            client_msg = "Video is private."
+        elif "sign in" in error_msg:
+            client_msg = "Video requires login."
         else:
-            client_msg = "The platform blocked the request or the URL is invalid."
-
+            client_msg = "Platform blocked the request."
         raise HTTPException(status_code=400, detail=client_msg)
-
     except Exception:
         raise HTTPException(
-            status_code=500,
-            detail="An unexpected error occurred while parsing the video."
-        )
+            status_code=500, detail="Unexpected error parsing video.")
 
 
 @app.get("/api/download")

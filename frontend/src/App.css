@@ -392,6 +392,13 @@ body {
 .quality-pill.active .res-badge {
   background: #4f46e5;
   color: #ffffff;
+  /* color: #000000; */
+}
+
+
+.quality-pill .res-size {
+
+  color: #000000;
 }
 
 /* Download Progress Bar */
